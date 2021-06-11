@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/url"
 	"os"
+	"os/exec"
 	"time"
 
 	"github.com/go-git/go-git/v5"
@@ -20,6 +21,7 @@ type ChangeDetector struct {
 	Watch   bool
 	Log     *zap.SugaredLogger
 
+	localPath    string
 	localRepo    *git.Repository
 	githubClient *github.Client
 }
@@ -28,16 +30,20 @@ type ChangeDetector struct {
 // If yes, it retrieves the local commit hash
 func (cd *ChangeDetector) Init() error {
 	repoName := utils.RepoName(*cd.RepoUrl)
-	if _, err := os.Stat("./" + repoName); err != nil && os.IsNotExist(err) {
-		r, errClone := utils.CloneRepo(cd.RepoUrl.String(), "./"+repoName)
+	cd.localPath = "./" + repoName
+	var err error
+	if _, err = os.Stat(cd.localPath); err != nil && os.IsNotExist(err) {
+		r, errClone := utils.CloneRepo(cd.RepoUrl.String(), cd.localPath)
 		if errClone != nil {
 			return errClone
 		}
 		cd.localRepo = r
-	} else if err != nil {
-		return err
+		err = cd.PostChangeAction()
 	}
 
+	if err != nil {
+		return err
+	}
 	// If we didn't clone the repo, it means it exists, so open it
 	if cd.localRepo == nil {
 		r, err := git.PlainOpen("./" + repoName)
@@ -67,6 +73,15 @@ func (cd *ChangeDetector) Run() error {
 	return nil
 }
 
+func (cd *ChangeDetector) PostChangeAction() error {
+	cd.Log.Debug("Running npm install")
+	cmd := exec.Command("npm", "install")
+	cmd.Dir = cd.localPath
+	out, err := cmd.Output()
+	cd.Log.Info(string(out))
+	return err
+}
+
 func (cd *ChangeDetector) CheckChange() error {
 	// TODO : Handle authentication ?
 
@@ -92,6 +107,7 @@ func (cd *ChangeDetector) CheckChange() error {
 			if err == nil {
 				cd.Log.Info("Successfully pulled remote origin")
 			}
+			err = cd.PostChangeAction()
 			return err
 		}
 	}
